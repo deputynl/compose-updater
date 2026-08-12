@@ -9,8 +9,8 @@
 # real host path. Adjust /srv/containers below to match your setup.
 services:
   compose-updater:
-    build: .
-    # or: image: compose-updater:latest
+    image: ghcr.io/deputynl/compose-updater:latest
+    # or: build: . (to build from source instead of pulling)
     restart: unless-stopped
     ports:
       - "8080:8080"

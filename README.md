@@ -37,17 +37,18 @@ JSON state file, and server-rendered HTML with a sprinkle of
 ```bash
 cp docker-compose.example.yml docker-compose.yml
 # edit docker-compose.yml: point the bind mount at your real containers folder
-docker compose up -d --build
+docker compose up -d
 ```
 
-Or skip the build and pull the prebuilt image instead — swap `build: .`
-for `image: ghcr.io/deputynl/compose-updater:latest` in
-`docker-compose.yml` (pinned tags like
+This pulls the prebuilt `ghcr.io/deputynl/compose-updater:latest` image,
+built for both `linux/amd64` and `linux/arm64` so Docker fetches the
+right variant automatically. Pinned tags like
 `ghcr.io/deputynl/compose-updater:20260812083118` are also published for
 each release, see
-[Packages](https://github.com/deputynl/compose-updater/pkgs/container/compose-updater)).
-It's built for both `linux/amd64` and `linux/arm64`, so Docker pulls the
-right variant automatically.
+[Packages](https://github.com/deputynl/compose-updater/pkgs/container/compose-updater).
+
+Or build from source instead — swap `image: ghcr.io/deputynl/compose-updater:latest`
+for `build: .` in `docker-compose.yml` and run `docker compose up -d --build`.
 
 Then open `http://<host>:8080`. On first visit you'll be asked to set
 the admin password (user is always `admin`). After that, log in and
