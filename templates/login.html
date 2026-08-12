@@ -1,0 +1,23 @@
+{{define "login.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>updatecontainers — log in</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="auth-page">
+  <form method="post" action="/login" class="auth-form">
+    <h1>Log in</h1>
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    <label>Password
+      <input type="password" name="password" required autofocus>
+    </label>
+    <button type="submit" class="primary">Log in</button>
+  </form>
+</body>
+</html>
+{{end}}

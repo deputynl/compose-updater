@@ -1,0 +1,414 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #666;
+  --border: #ddd;
+  --accent: #2563eb;
+  --ok: #16a34a;
+  --fail: #dc2626;
+  --warn: #d97706;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --fg: #e6e6e6;
+    --muted: #9a9a9a;
+    --border: #333;
+    --accent: #5b9dff;
+    --ok: #4ade80;
+    --fail: #f87171;
+    --warn: #fbbf24;
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* App shell: header/toolbar have a fixed natural height and are always
+   visible; .layout takes the rest of the viewport and never itself
+   scrolls - only the two panels inside it do, independently. */
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  margin: 0;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: .75rem;
+  flex: 0 0 auto;
+}
+h1 { font-size: 1.1rem; margin: 0; }
+h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 .5rem; flex: 0 0 auto; }
+
+/* Mirrors .layout's grid so each half of the toolbar sits directly above
+   the panel it controls - the filter box ends up the same width as, and
+   flush above, the console panel it filters. */
+.toolbar {
+  display: grid;
+  grid-template-columns: minmax(500px, 600px) 1fr;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: .75rem;
+  flex: 0 0 auto;
+}
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-width: 0;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(500px, 600px) 1fr;
+  gap: 1rem;
+  flex: 1 1 auto;
+  min-height: 0; /* let a grid row shrink to the remaining space instead of growing to content */
+}
+@media (max-width: 860px) {
+  body { overflow: visible; height: auto; }
+  .toolbar { grid-template-columns: 1fr; gap: .5rem; }
+  .layout { grid-template-columns: 1fr; flex: 0 0 auto; }
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: .5rem .65rem;
+  min-width: 0; /* let a grid/flex child shrink below its content's natural width */
+  height: 100%;
+  min-height: 0;
+}
+.stacks-panel {
+  overflow: auto; /* only the list scrolls; header/toolbar/table head stay put */
+  --strip-h: 0px; /* live height of .updating-strip, set by app.js so the sticky
+                     table header can sit right below it instead of overlapping */
+}
+@media (max-width: 860px) {
+  .panel { height: auto; }
+  .stacks-panel { overflow: visible; }
+}
+
+button {
+  font: inherit;
+  font-size: .85rem;
+  padding: .3rem .65rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.link-btn {
+  border: none;
+  background: none;
+  color: var(--muted);
+  text-decoration: underline;
+  padding: 0;
+}
+
+button.update-btn { padding: .2rem .5rem; font-size: .72rem; }
+
+/* Post-update-steps indicator button: muted/outline when unconfigured,
+   accent-colored once a script is set, so it doubles as an indicator. */
+button.post-btn {
+  padding: .2rem .4rem;
+  font-size: .68rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--muted);
+}
+button.post-btn.has-script {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+/* Toolbar variant (final-step button): same on/off color coding as
+   post-btn, but normal button size/font to match its toolbar siblings. */
+#final-step-btn {
+  font-family: inherit;
+  font-size: .85rem;
+  padding: .3rem .65rem;
+}
+
+/* Toggle switch (include-in-group-update control) */
+button.switch {
+  position: relative;
+  width: 2rem;
+  height: 1.1rem;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--border);
+  cursor: pointer;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+button.switch .thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: .9rem;
+  height: .9rem;
+  border-radius: 50%;
+  background: #fff;
+  transition: left .15s ease;
+}
+button.switch.on { background: var(--ok); }
+button.switch.on .thumb { left: calc(100% - .9rem - 2px); }
+
+/* Summary of currently-updating stacks, shown at the top of the panel in
+   addition to (not instead of) each stack's normal alphabetical row below -
+   the table itself never reorders, so rows don't jump around mid-update.
+   Sticky (like the table head below it) so it stays visible no matter how
+   far down the list is scrolled; app.js keeps --strip-h in sync with its
+   real height so the table head can offset below it instead of overlapping. */
+.updating-strip {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  background: var(--bg);
+  /* Same compositing-layer fix as table.stacks th below - without it these
+     two stacked sticky elements can let scrolled-past row content show
+     through during the scroll gesture in some browsers. */
+  will-change: transform;
+  transform: translateZ(0);
+}
+.updating-strip:not(:empty) {
+  padding-bottom: .5rem;
+  margin-bottom: .5rem;
+  border-bottom: 1px solid var(--border);
+}
+.updating-chip {
+  min-width: 9rem;
+  padding: .3rem .5rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font-size: .7rem;
+}
+.updating-chip .chip-name {
+  display: block;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: .25rem;
+}
+.updating-chip .progress-label { margin-top: .1rem; }
+
+table.stacks {
+  width: 100%;
+  table-layout: fixed; /* fixed column widths below so content can never push the table past the panel */
+  /* separate (not collapse): position:sticky on thead th is unreliable
+     with border-collapse in some browsers (notably Safari) */
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: .78rem;
+}
+table.stacks th, table.stacks td {
+  text-align: left;
+  padding: .3rem .35rem;
+  border-bottom: 1px solid var(--border);
+  line-height: 1.3;
+  overflow: hidden;
+}
+table.stacks th {
+  position: sticky;
+  top: var(--strip-h, 0px); /* sits right below .updating-strip instead of under it */
+  z-index: 1;
+  background: var(--bg);
+  /* Forces its own compositing layer - without this, some browsers
+     (notably Chrome) can fail to paint a sticky element as fully opaque
+     while scrolling, letting the content behind it show through. */
+  will-change: transform;
+  transform: translateZ(0);
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis; /* safety net if a label is ever too tight for its column */
+}
+table.stacks th:nth-child(1), table.stacks td:nth-child(1) { width: 2.75rem; }
+table.stacks th:nth-child(2), table.stacks td:nth-child(2) { width: 2.4rem; }
+table.stacks th:nth-child(4), table.stacks td:nth-child(4) { width: 4.5rem; }
+table.stacks th:nth-child(5), table.stacks td:nth-child(5) { width: 8.5rem; }
+table.stacks th:nth-child(6), table.stacks td:nth-child(6) { width: 4.5rem; }
+table.stacks .name {
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pill {
+  display: inline-block;
+  padding: 0 .4rem;
+  border-radius: 999px;
+  font-size: .68rem;
+  line-height: 1.5;
+  border: 1px solid var(--border);
+  text-transform: capitalize;
+}
+.pill-updating { color: var(--accent); border-color: var(--accent); }
+.pill-success { color: var(--ok); border-color: var(--ok); }
+.pill-failed { color: var(--fail); border-color: var(--fail); }
+
+.err { cursor: help; }
+
+.run-indicator { color: var(--accent); font-size: .8rem; }
+
+.bar {
+  width: 100%;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width .2s ease;
+}
+.progress-label {
+  font-size: .65rem;
+  color: var(--muted);
+  margin-top: .15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.console-panel {
+  display: flex;
+  flex-direction: column;
+}
+/* Lines up with the panel's own inner content edge (border + padding)
+   below it, so its left/right edges match the console pane exactly
+   instead of the wider toolbar grid cell it sits in. Width is computed
+   explicitly (not width:auto) because <input> keeps its own intrinsic
+   ~20-character width inside a grid/flex track regardless of stretch
+   alignment - unlike a <div>, it won't fill the track on its own. */
+.console-filter {
+  display: block;
+  width: calc(100% - 1.3rem - 2px);
+  margin-left: calc(.65rem + 1px);
+  box-sizing: border-box;
+  /* Reset native control chrome first - some browsers/OS themes render
+     text inputs with their own square, grey-filled widget and ignore
+     border-radius/background entirely until appearance is cleared. */
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: .78rem;
+  padding: .35rem .7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+.console-filter::placeholder { color: var(--muted); }
+.console-filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+@media (max-width: 860px) {
+  .console-panel { height: 60vh; }
+}
+.console {
+  flex: 1;
+  min-height: 0;
+  background: #0b0d10;
+  color: #d6f5d6;
+  border-radius: 6px;
+  padding: .6rem .75rem;
+  overflow-y: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: .78rem;
+  white-space: pre-wrap;
+}
+
+.auth-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
+  width: 100%;
+  max-width: 320px;
+}
+.auth-form label { display: flex; flex-direction: column; gap: .25rem; font-size: .9rem; }
+.auth-form input {
+  font: inherit;
+  padding: .5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+.hint { color: var(--muted); font-size: .85rem; }
+.error { color: var(--fail); font-size: .9rem; }
+
+.post-dialog {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.post-dialog::backdrop { background: rgba(0, 0, 0, .4); }
+.post-dialog h2 { margin: 0 0 .5rem; text-transform: none; letter-spacing: normal; font-size: 1rem; color: var(--fg); }
+.post-dialog textarea, .post-dialog input[type="text"] {
+  width: 100%;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: .8rem;
+  padding: .5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  box-sizing: border-box;
+}
+.post-dialog textarea { resize: vertical; }
+.field-label {
+  display: block;
+  font-size: .8rem;
+  color: var(--muted);
+  margin: .5rem 0 .25rem;
+}
+.post-edit-actions {
+  display: flex;
+  gap: .5rem;
+  margin-top: .75rem;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .85rem;
+  margin-bottom: .5rem;
+}
+.checkbox-label input { margin: 0; }

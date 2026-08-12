@@ -1,0 +1,90 @@
+{{define "index.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>updatecontainers</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon.png">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>update containers</h1>
+    <form method="post" action="/logout" class="logout"><button type="submit" class="link-btn">Log out</button></form>
+  </header>
+
+  <div class="toolbar">
+    <div class="toolbar-actions">
+      <button type="button" id="update-selected" name="target" value="all"
+        class="primary" hx-post="/api/update" hx-swap="none">Update selected</button>
+      <button type="button" id="rescan" hx-post="/api/rescan" hx-target="#stack-table-body" hx-swap="innerHTML">Rescan folder</button>
+      {{template "final-step-btn" .FinalStep}}
+      <span id="run-indicator" class="run-indicator" hidden>updating…</span>
+    </div>
+    <input type="text" id="console-filter" class="console-filter" placeholder="Filter live output…" aria-label="Filter live output by container name or log text">
+  </div>
+
+  <div class="layout">
+    <section class="panel stacks-panel">
+      <div id="updating-strip" class="updating-strip"></div>
+      <table class="stacks">
+        <thead>
+          <tr>
+            <th title="Include in group update">On</th>
+            <th title="Post-update steps">Post</th>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Updated</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="stack-table-body">
+          {{template "tbody" .}}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel console-panel">
+      <h2>Live output</h2>
+      <pre id="console" class="console"></pre>
+    </section>
+  </div>
+
+  <dialog id="post-dialog" class="post-dialog">
+    <form id="post-form" hx-swap="outerHTML">
+      <h2>Post-update steps</h2>
+      <p class="hint">Shell commands to run inside <strong id="post-dialog-name"></strong>'s container once it's pulled and started. Leave script blank to disable.</p>
+      <label class="field-label" for="post-container-input">Container / service name</label>
+      <input type="text" name="container" id="post-container-input" placeholder="leave blank to auto-detect (single-service stacks only)">
+      <textarea name="script" id="post-script-input" rows="6" placeholder="e.g. curl -X POST http://localhost/reload"></textarea>
+      <div class="post-edit-actions">
+        <button type="submit" class="primary">Save</button>
+        <button type="button" id="post-cancel-btn">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="final-step-dialog" class="post-dialog">
+    <form id="final-step-form" hx-post="/api/final-step" hx-target="#final-step-btn" hx-swap="outerHTML">
+      <h2>Final step</h2>
+      <p class="hint">Shell commands to run once, after every stack in "Update selected" has finished (not after single-container updates).</p>
+      <label class="checkbox-label">
+        <input type="checkbox" name="enabled" id="final-step-enabled" {{if .FinalStep.Enabled}}checked{{end}}>
+        Run after "Update selected"
+      </label>
+      <textarea name="script" id="final-step-input" rows="4">{{.FinalStep.Script}}</textarea>
+      <div class="post-edit-actions">
+        <button type="submit" class="primary">Save</button>
+        <button type="button" id="final-step-run-btn" hx-post="/api/final-step/run" hx-swap="none">Run now</button>
+        <button type="button" id="final-step-cancel-btn">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

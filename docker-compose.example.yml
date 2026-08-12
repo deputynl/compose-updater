@@ -1,0 +1,26 @@
+# Example deployment of compose-updater itself.
+#
+# IMPORTANT: the host folder that holds your per-container compose
+# subfolders must be mounted at the SAME absolute path inside this
+# container as it has on the host. compose-updater shells out to
+# `docker compose` against your HOST daemon (via the socket), so any
+# relative bind-mounts inside your compose files (e.g. `./data:/data`)
+# only resolve correctly if the path compose-updater sees matches the
+# real host path. Adjust /srv/containers below to match your setup.
+services:
+  compose-updater:
+    build: .
+    # or: image: compose-updater:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/containers:/srv/containers
+      - updater-data:/data
+    environment:
+      COMPOSE_ROOT: /srv/containers
+      MAX_PARALLEL: "4"
+
+volumes:
+  updater-data:

@@ -1,0 +1,35 @@
+{{define "row"}}
+<tr id="stack-{{.Name}}" data-name="{{.Name}}">
+  <td>
+    <button type="button" class="switch{{if .Enabled}} on{{end}}"
+      hx-post="/api/stacks/{{.Name}}/toggle"
+      hx-target="#stack-{{.Name}}" hx-swap="outerHTML"
+      aria-pressed="{{if .Enabled}}true{{else}}false{{end}}"
+      aria-label="Include {{.Name}} in group update"><span class="thumb"></span></button>
+  </td>
+  <td>
+    <button type="button" class="post-btn{{if .PostScript}} has-script{{end}}"
+      data-name="{{.Name}}" data-script="{{.PostScript}}" data-container="{{.PostContainer}}"
+      title="{{if .PostScript}}{{.PostScript}}{{else}}No post-update steps configured{{end}}"
+      aria-label="Post-update steps for {{.Name}}">&gt;_</button>
+  </td>
+  <td class="name" title="{{.Name}}">{{.Name}}</td>
+  <td><span class="pill pill-{{.State}}" id="pill-{{.Name}}">{{.State}}</span></td>
+  <td class="last-update" id="lastrun-{{.Name}}">
+    <time class="ts" datetime="{{.LastRun}}">{{if not .LastRun}}never{{end}}</time>
+    {{if .LastError}}<span class="err" title="{{.LastError}}">⚠</span>{{end}}
+  </td>
+  <td>
+    <button type="button" name="target" value="{{.Name}}"
+      class="update-btn" hx-post="/api/update" hx-swap="none">Update</button>
+  </td>
+</tr>
+{{end}}
+
+{{define "tbody"}}{{range .Rows}}{{template "row" .}}{{end}}{{end}}
+
+{{define "final-step-btn"}}
+<button type="button" id="final-step-btn" class="post-btn{{if .Enabled}} has-script{{end}}"
+  data-enabled="{{if .Enabled}}1{{end}}" data-script="{{.Script}}"
+  title="{{if .Enabled}}Final step (runs after Update selected):&#10;{{.Script}}{{else}}Final step is off{{end}}">Final step</button>
+{{end}}

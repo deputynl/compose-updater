@@ -1,0 +1,27 @@
+{{define "setup.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>updatecontainers — set admin password</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="auth-page">
+  <form method="post" action="/setup" class="auth-form">
+    <h1>Set the admin password</h1>
+    <p class="hint">No password is set yet. Choose one to protect this instance (user: <code>admin</code>).</p>
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    <label>Password
+      <input type="password" name="password" minlength="8" required autofocus>
+    </label>
+    <label>Confirm password
+      <input type="password" name="confirm" minlength="8" required>
+    </label>
+    <button type="submit" class="primary">Set password</button>
+  </form>
+</body>
+</html>
+{{end}}
