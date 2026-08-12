@@ -43,7 +43,7 @@ docker compose up -d --build
 Or skip the build and pull the prebuilt image instead — swap `build: .`
 for `image: ghcr.io/deputynl/compose-updater:latest` in
 `docker-compose.yml` (pinned tags like
-`ghcr.io/deputynl/compose-updater:20260812102700` are also published for
+`ghcr.io/deputynl/compose-updater:20260812083118` are also published for
 each release, see
 [Packages](https://github.com/deputynl/compose-updater/pkgs/container/compose-updater)).
 It's built for both `linux/amd64` and `linux/arm64`, so Docker pulls the
