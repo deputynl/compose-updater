@@ -13,7 +13,7 @@ No database, no build step, no JS framework: a single Go binary, a
 JSON state file, and server-rendered HTML with a sprinkle of
 [htmx](https://htmx.org).
 
-![Screenshot of compose-updater, showing a stack table with a mix of enabled/disabled containers, update statuses, and last-updated times (mocked-up demo content)](docs/screenshot.jpg)
+![Screenshot of compose-updater, showing a stack table with a mix of enabled/disabled containers, update statuses, and last-updated times (mocked-up demo content)](./docs/screenshot.jpg)
 
 ## How it works
 
