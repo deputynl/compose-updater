@@ -190,42 +190,57 @@
     if (chip) chip.querySelector(".chip-progress").innerHTML = html;
   }
 
-  function connect() {
-    const es = new EventSource("/events");
+  // Live state comes from short-lived polls of /api/poll rather than a
+  // long-lived connection (SSE previously) - a Cloudflare Tunnel in front
+  // of this app was found to buffer/drop long-lived streaming responses
+  // for minutes at a time with no error the browser could react to.
+  // Plain fetches go through the same path every other /api/* call
+  // already uses reliably, and since each tick is independent there's no
+  // stale connection to detect or reconnect - a failed tick just retries
+  // on the next one.
+  const POLL_ACTIVE_MS = 700; // fast feedback while something's running
+  const POLL_IDLE_MS = 4000; // otherwise, just watch for other clients/manual runs
 
-    es.addEventListener("snapshot", (e) => {
-      const snap = JSON.parse(e.data);
-      setActive(snap.active);
-      Object.values(snap.statuses || {}).forEach(applyStackStatus);
-      Object.entries(snap.progress || {}).forEach(([name, p]) => {
-        const s = snap.statuses[name];
-        if (s && s.state === "updating") applyProgress(p);
-      });
-    });
+  let pollSince = null; // null = fresh page load, fetch a cursor with no backlog
+  let pollActive = false;
+  let pollTimer = null;
 
-    es.addEventListener("stack", (e) => {
-      applyStackStatus(JSON.parse(e.data));
-    });
-    es.addEventListener("progress", (e) => applyProgress(JSON.parse(e.data)));
+  async function poll() {
+    try {
+      const url = pollSince == null ? "/api/poll" : "/api/poll?since=" + pollSince;
+      const res = await fetch(url, { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        pollActive = !!data.active;
+        setActive(pollActive);
+        Object.values(data.statuses || {}).forEach(applyStackStatus);
+        Object.entries(data.progress || {}).forEach(([name, p]) => {
+          const s = data.statuses[name];
+          if (s && s.state === "updating") applyProgress(p);
+        });
+        (data.logs || []).forEach((d) => log(d.stack, d.line));
+        pollSince = data.nextSince;
+      }
+    } catch (e) {
+      // Network hiccup (tunnel blip, laptop woke from sleep, etc.) - the
+      // next tick just tries again from the same cursor.
+    }
+    pollTimer = setTimeout(poll, pollActive ? POLL_ACTIVE_MS : POLL_IDLE_MS);
+  }
 
-    es.addEventListener("log", (e) => {
-      const d = JSON.parse(e.data);
-      log(d.stack, d.line);
-    });
-
-    es.addEventListener("done", () => setActive(false));
-
-    es.onopen = () => setActive(false);
-    es.onerror = () => {
-      es.close();
-      setTimeout(connect, 2000);
-    };
+  // Kicks a poll off immediately instead of waiting out whatever's left of
+  // the current (possibly idle, up-to-4s) interval - called right as an
+  // update starts, so the UI doesn't sit frozen on the click.
+  function pollNow() {
+    if (pollTimer) clearTimeout(pollTimer);
+    poll();
   }
 
   document.body.addEventListener("htmx:beforeRequest", (e) => {
     const el = e.target;
     if (el && (el.id === "update-selected" || el.id === "final-step-run-btn" || el.classList.contains("update-btn"))) {
       setActive(true);
+      pollNow();
     }
     if (el && el.id === "update-selected") {
       // Updating stacks get a chip in the strip at the top of the panel -
@@ -303,5 +318,5 @@
     formatAllTimestamps();
   });
 
-  connect();
+  poll();
 })();

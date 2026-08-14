@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"html/template"
 	"log"
 	"net/http"
@@ -86,7 +87,7 @@ func main() {
 	mux.HandleFunc("POST /api/final-step/run", a.auth.RequireAuth(a.handleFinalStepRun))
 	mux.HandleFunc("POST /api/rescan", a.auth.RequireAuth(a.handleRescan))
 	mux.HandleFunc("POST /api/update", a.auth.RequireAuth(a.handleUpdate))
-	mux.HandleFunc("GET /events", a.auth.RequireAuth(a.handleEvents))
+	mux.HandleFunc("GET /api/poll", a.auth.RequireAuth(a.handlePoll))
 
 	mux.Handle("GET /static/", http.StripPrefix("/static/", noCache(http.FileServer(http.Dir(staticDir())))))
 
@@ -344,42 +345,46 @@ func (a *app) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (a *app) handleEvents(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	// no-transform tells Cloudflare (and other intermediate proxies) not to
-	// buffer/compress this response - without it, a mostly-idle SSE stream
-	// can sit unflushed at the edge until an idle timeout kills it, and the
-	// browser never sees a single event.
-	w.Header().Set("Cache-Control", "no-cache, no-transform")
-	w.Header().Set("Connection", "keep-alive")
+// pollResponse is the UI's single source of live state: current
+// statuses/progress/active flag (always sent in full - the row count is
+// small) plus any console log lines newer than the client's cursor.
+//
+// This replaced an SSE (/events) endpoint that, in practice, sat
+// buffered/undelivered behind a Cloudflare Tunnel for minutes at a time
+// with no error the browser could react to. Plain short-lived polling
+// requests go through the same path as every other /api/* call (which
+// has always worked reliably here), trading a bit of latency and some
+// redundant status payloads for a mechanism with no long-lived
+// connection for an intermediary to buffer or silently drop.
+type pollResponse struct {
+	internal.Snapshot
+	Logs      []internal.LogEntry `json:"logs"`
+	NextSince int64               `json:"nextSince"`
+}
 
-	ch := a.mgr.Subscribe()
-	defer a.mgr.Unsubscribe(ch)
-
-	snap := a.mgr.Snapshot()
-	_ = internal.WriteSSE(w, internal.Event{Name: "snapshot", Data: snap})
-	flusher.Flush()
-
-	ctx := r.Context()
-	for {
-		select {
-		case <-ctx.Done():
+func (a *app) handlePoll(w http.ResponseWriter, r *http.Request) {
+	var logs []internal.LogEntry
+	var next int64
+	if s := r.URL.Query().Get("since"); s != "" {
+		since, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			http.Error(w, "bad since", http.StatusBadRequest)
 			return
-		case ev, ok := <-ch:
-			if !ok {
-				return
-			}
-			if err := internal.WriteSSE(w, ev); err != nil {
-				return
-			}
-			flusher.Flush()
 		}
+		logs, next = a.mgr.LogsSince(since)
+	} else {
+		// No cursor yet (fresh page load) - report where the log stream
+		// currently is without dumping the whole backlog on connect.
+		next = a.mgr.LogCursor()
 	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(pollResponse{
+		Snapshot:  a.mgr.Snapshot(),
+		Logs:      logs,
+		NextSince: next,
+	})
 }
 
 // render writes a full page (extends base layout via {{define "content"}}).

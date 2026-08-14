@@ -30,22 +30,35 @@ type StackStatus struct {
 	LastError string    `json:"lastError,omitempty"`
 }
 
-const maxLogLines = 500
+// maxLogBuf caps the shared, sequenced log ring the UI polls from - old
+// entries fall off once a run generates more than this many lines.
+const maxLogBuf = 2000
+
+// LogEntry is one console line, tagged with a monotonically increasing
+// Seq so /api/poll clients can ask for "everything after N" instead of
+// re-fetching the whole backlog every poll.
+type LogEntry struct {
+	Seq   int64  `json:"seq"`
+	Stack string `json:"stack"`
+	Line  string `json:"line"`
+}
 
 // Manager runs `docker compose pull && up -d` for one or more stacks,
-// capped at maxParallel concurrent stacks, and broadcasts progress over
-// SSE via hub.
+// capped at maxParallel concurrent stacks. The UI learns about progress
+// by polling Snapshot/LogsSince rather than any push mechanism - see
+// handlePoll in main.go.
 type Manager struct {
 	composeRoot string
 	maxParallel int
-	hub         *hub
 	state       *StateStore // persists terminal status/lastRun across restarts
 
 	mu       sync.Mutex
 	statuses map[string]*StackStatus
-	logs     map[string][]string
 	progress map[string]*stackProgress
 	active   bool
+
+	logSeq int64
+	logBuf []LogEntry
 }
 
 func NewManager(composeRoot string, maxParallel int, state *StateStore) *Manager {
@@ -55,10 +68,8 @@ func NewManager(composeRoot string, maxParallel int, state *StateStore) *Manager
 	return &Manager{
 		composeRoot: composeRoot,
 		maxParallel: maxParallel,
-		hub:         newHub(),
 		state:       state,
 		statuses:    map[string]*StackStatus{},
-		logs:        map[string][]string{},
 		progress:    map[string]*stackProgress{},
 	}
 }
@@ -124,8 +135,31 @@ func (m *Manager) Snapshot() Snapshot {
 	return Snapshot{Active: active, Statuses: statuses, Progress: progress}
 }
 
-func (m *Manager) Subscribe() chan Event     { return m.hub.subscribe() }
-func (m *Manager) Unsubscribe(ch chan Event) { m.hub.unsubscribe(ch) }
+// LogsSince returns log entries with Seq > since, in order, plus the
+// cursor (current logSeq) to pass as `since` on the next poll. If since
+// predates the oldest buffered entry (client was away longer than
+// maxLogBuf held), it just returns what's still available - this is a
+// best-effort live tail, not an audit log.
+func (m *Manager) LogsSince(since int64) ([]LogEntry, int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	start := 0
+	for start < len(m.logBuf) && m.logBuf[start].Seq <= since {
+		start++
+	}
+	out := make([]LogEntry, len(m.logBuf)-start)
+	copy(out, m.logBuf[start:])
+	return out, m.logSeq
+}
+
+// LogCursor returns the current log sequence with no backlog - used to
+// initialize a freshly loaded page's polling cursor so it only sees log
+// lines from here on, not the whole buffered history.
+func (m *Manager) LogCursor() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.logSeq
+}
 
 // Status returns a copy of the current status for a single stack.
 func (m *Manager) Status(name string) (StackStatus, bool) {
@@ -173,7 +207,6 @@ func (m *Manager) runAll(names []string, isGroupRun bool) {
 		m.active = false
 		m.mu.Unlock()
 		log.Printf("run finished: stacks=%v", names)
-		m.hub.broadcast(Event{Name: "done", Data: map[string]any{}})
 	}()
 
 	sem := make(chan struct{}, m.maxParallel)
@@ -251,7 +284,6 @@ func (m *Manager) RunFinalStepNow(script string) error {
 			m.mu.Lock()
 			m.active = false
 			m.mu.Unlock()
-			m.hub.broadcast(Event{Name: "done", Data: map[string]any{}})
 		}()
 		m.runFinalStepScript(script)
 	}()
@@ -305,7 +337,6 @@ func (m *Manager) runCompose(name, dir, phase string, args []string) (*stackProg
 	m.mu.Lock()
 	m.progress[name] = sp
 	m.mu.Unlock()
-	m.hub.broadcast(Event{Name: "progress", Data: sp.Last()})
 
 	cmd := exec.Command("docker", append([]string{"compose"}, args...)...)
 	cmd.Dir = dir
@@ -411,8 +442,9 @@ func (m *Manager) handleComposeLine(name, phase string, sp *stackProgress, line 
 		return
 	}
 
-	update := sp.Apply(name, ev)
-	m.hub.broadcast(Event{Name: "progress", Data: update})
+	// Mutates sp in place - polling clients pick this up via Snapshot(),
+	// which reads sp.Last() on demand rather than being pushed a copy here.
+	sp.Apply(name, ev)
 
 	if text, show := friendlyLine(phase, ev); show {
 		m.appendLog(name, text)
@@ -420,16 +452,15 @@ func (m *Manager) handleComposeLine(name, phase string, sp *stackProgress, line 
 }
 
 func (m *Manager) appendLog(name, line string) {
-	m.mu.Lock()
-	lines := append(m.logs[name], line)
-	if len(lines) > maxLogLines {
-		lines = lines[len(lines)-maxLogLines:]
-	}
-	m.logs[name] = lines
-	m.mu.Unlock()
-
 	log.Printf("[%s] %s", name, line)
-	m.hub.broadcast(Event{Name: "log", Data: map[string]string{"stack": name, "line": line}})
+
+	m.mu.Lock()
+	m.logSeq++
+	m.logBuf = append(m.logBuf, LogEntry{Seq: m.logSeq, Stack: name, Line: line})
+	if len(m.logBuf) > maxLogBuf {
+		m.logBuf = m.logBuf[len(m.logBuf)-maxLogBuf:]
+	}
+	m.mu.Unlock()
 }
 
 // touched marks that this call should bump LastRun to now - a failure is
@@ -460,6 +491,4 @@ func (m *Manager) setStatus(name string, state RunState, errMsg string, touched 
 	if (state == StateSuccess || state == StateFailed) && m.state != nil {
 		_ = m.state.SetStatus(name, state, cp.LastRun, errMsg)
 	}
-
-	m.hub.broadcast(Event{Name: "stack", Data: cp})
 }
