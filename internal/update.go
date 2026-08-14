@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -161,6 +162,7 @@ func (m *Manager) StartRun(names []string, isGroupRun bool) error {
 	m.active = true
 	m.mu.Unlock()
 
+	log.Printf("run starting: stacks=%v group=%v", names, isGroupRun)
 	go m.runAll(names, isGroupRun)
 	return nil
 }
@@ -170,6 +172,7 @@ func (m *Manager) runAll(names []string, isGroupRun bool) {
 		m.mu.Lock()
 		m.active = false
 		m.mu.Unlock()
+		log.Printf("run finished: stacks=%v", names)
 		m.hub.broadcast(Event{Name: "done", Data: map[string]any{}})
 	}()
 
@@ -425,6 +428,7 @@ func (m *Manager) appendLog(name, line string) {
 	m.logs[name] = lines
 	m.mu.Unlock()
 
+	log.Printf("[%s] %s", name, line)
 	m.hub.broadcast(Event{Name: "log", Data: map[string]string{"stack": name, "line": line}})
 }
 
@@ -446,6 +450,12 @@ func (m *Manager) setStatus(name string, state RunState, errMsg string, touched 
 	}
 	cp := *s
 	m.mu.Unlock()
+
+	if errMsg != "" {
+		log.Printf("%s: %s (%s)", name, state, errMsg)
+	} else {
+		log.Printf("%s: %s", name, state)
+	}
 
 	if (state == StateSuccess || state == StateFailed) && m.state != nil {
 		_ = m.state.SetStatus(name, state, cp.LastRun, errMsg)

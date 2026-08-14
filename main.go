@@ -351,7 +351,11 @@ func (a *app) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	// no-transform tells Cloudflare (and other intermediate proxies) not to
+	// buffer/compress this response - without it, a mostly-idle SSE stream
+	// can sit unflushed at the edge until an idle timeout kills it, and the
+	// browser never sees a single event.
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
 
 	ch := a.mgr.Subscribe()
