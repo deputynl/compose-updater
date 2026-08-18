@@ -190,57 +190,48 @@
     if (chip) chip.querySelector(".chip-progress").innerHTML = html;
   }
 
-  // Live state comes from short-lived polls of /api/poll rather than a
-  // long-lived connection (SSE previously) - a Cloudflare Tunnel in front
-  // of this app was found to buffer/drop long-lived streaming responses
-  // for minutes at a time with no error the browser could react to.
-  // Plain fetches go through the same path every other /api/* call
-  // already uses reliably, and since each tick is independent there's no
-  // stale connection to detect or reconnect - a failed tick just retries
-  // on the next one.
-  const POLL_ACTIVE_MS = 700; // fast feedback while something's running
-  const POLL_IDLE_MS = 4000; // otherwise, just watch for other clients/manual runs
+  // Live state is pushed over a WebSocket rather than pulled via SSE (which
+  // a Cloudflare Tunnel in front of this app was found to buffer/drop for
+  // minutes at a time with no error the browser could react to) or polling
+  // (which worked but felt laggy). WebSocket upgrades pass through the same
+  // Cloudflare Tunnel + Traefik chain as a plain opaque bidirectional pipe
+  // once the 101 handshake completes, rather than as bufferable/compressible
+  // HTTP response content - this project's wetty deployment already proves
+  // that out for the exact same infrastructure.
+  function connect() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(proto + "//" + location.host + "/api/ws");
 
-  let pollSince = null; // null = fresh page load, fetch a cursor with no backlog
-  let pollActive = false;
-  let pollTimer = null;
-
-  async function poll() {
-    try {
-      const url = pollSince == null ? "/api/poll" : "/api/poll?since=" + pollSince;
-      const res = await fetch(url, { cache: "no-store" });
-      if (res.ok) {
-        const data = await res.json();
-        pollActive = !!data.active;
-        setActive(pollActive);
-        Object.values(data.statuses || {}).forEach(applyStackStatus);
-        Object.entries(data.progress || {}).forEach(([name, p]) => {
-          const s = data.statuses[name];
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "snapshot") {
+        const snap = msg.data;
+        setActive(snap.active);
+        Object.values(snap.statuses || {}).forEach(applyStackStatus);
+        Object.entries(snap.progress || {}).forEach(([name, p]) => {
+          const s = snap.statuses[name];
           if (s && s.state === "updating") applyProgress(p);
         });
-        (data.logs || []).forEach((d) => log(d.stack, d.line));
-        pollSince = data.nextSince;
+      } else if (msg.type === "stack") {
+        applyStackStatus(msg.data);
+      } else if (msg.type === "progress") {
+        applyProgress(msg.data);
+      } else if (msg.type === "log") {
+        log(msg.data.stack, msg.data.line);
+      } else if (msg.type === "done") {
+        setActive(false);
       }
-    } catch (e) {
-      // Network hiccup (tunnel blip, laptop woke from sleep, etc.) - the
-      // next tick just tries again from the same cursor.
-    }
-    pollTimer = setTimeout(poll, pollActive ? POLL_ACTIVE_MS : POLL_IDLE_MS);
-  }
+    };
 
-  // Kicks a poll off immediately instead of waiting out whatever's left of
-  // the current (possibly idle, up-to-4s) interval - called right as an
-  // update starts, so the UI doesn't sit frozen on the click.
-  function pollNow() {
-    if (pollTimer) clearTimeout(pollTimer);
-    poll();
+    ws.onopen = () => setActive(false);
+    ws.onerror = () => ws.close();
+    ws.onclose = () => setTimeout(connect, 2000);
   }
 
   document.body.addEventListener("htmx:beforeRequest", (e) => {
     const el = e.target;
     if (el && (el.id === "update-selected" || el.id === "final-step-run-btn" || el.classList.contains("update-btn"))) {
       setActive(true);
-      pollNow();
     }
     if (el && el.id === "update-selected") {
       // Updating stacks get a chip in the strip at the top of the panel -
@@ -318,5 +309,5 @@
     formatAllTimestamps();
   });
 
-  poll();
+  connect();
 })();

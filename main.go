@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"html/template"
 	"log"
 	"net/http"
@@ -11,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"compose-updater/internal"
 )
@@ -87,7 +88,7 @@ func main() {
 	mux.HandleFunc("POST /api/final-step/run", a.auth.RequireAuth(a.handleFinalStepRun))
 	mux.HandleFunc("POST /api/rescan", a.auth.RequireAuth(a.handleRescan))
 	mux.HandleFunc("POST /api/update", a.auth.RequireAuth(a.handleUpdate))
-	mux.HandleFunc("GET /api/poll", a.auth.RequireAuth(a.handlePoll))
+	mux.HandleFunc("GET /api/ws", a.auth.RequireAuth(a.handleWS))
 
 	mux.Handle("GET /static/", http.StripPrefix("/static/", noCache(http.FileServer(http.Dir(staticDir())))))
 
@@ -345,46 +346,79 @@ func (a *app) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// pollResponse is the UI's single source of live state: current
-// statuses/progress/active flag (always sent in full - the row count is
-// small) plus any console log lines newer than the client's cursor.
-//
-// This replaced an SSE (/events) endpoint that, in practice, sat
-// buffered/undelivered behind a Cloudflare Tunnel for minutes at a time
-// with no error the browser could react to. Plain short-lived polling
-// requests go through the same path as every other /api/* call (which
-// has always worked reliably here), trading a bit of latency and some
-// redundant status payloads for a mechanism with no long-lived
-// connection for an intermediary to buffer or silently drop.
-type pollResponse struct {
-	internal.Snapshot
-	Logs      []internal.LogEntry `json:"logs"`
-	NextSince int64               `json:"nextSince"`
+// wsUpgrader accepts every Origin: RequireAuth already gates this
+// endpoint via the session cookie, and Traefik/Cloudflare's header
+// forwarding has produced subtle Host-vs-Origin mismatches in this
+// deployment before, so there's nothing gained by also relying on
+// gorilla's default same-origin check here.
+var wsUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-func (a *app) handlePoll(w http.ResponseWriter, r *http.Request) {
-	var logs []internal.LogEntry
-	var next int64
-	if s := r.URL.Query().Get("since"); s != "" {
-		since, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			http.Error(w, "bad since", http.StatusBadRequest)
-			return
-		}
-		logs, next = a.mgr.LogsSince(since)
-	} else {
-		// No cursor yet (fresh page load) - report where the log stream
-		// currently is without dumping the whole backlog on connect.
-		next = a.mgr.LogCursor()
+// wsMessage is one push to a connected browser - see internal.Event for
+// the server-side source this is built from.
+type wsMessage struct {
+	Type string `json:"type"`
+	Data any    `json:"data"`
+}
+
+// wsPingInterval keeps the connection active through any idle timeout an
+// intermediary (Traefik, the Cloudflare Tunnel) might apply - cheap
+// insurance, not something this deployment has needed yet for WebSocket
+// specifically, but SSE's failure mode here was exactly this class of
+// problem for a different transport.
+const wsPingInterval = 30 * time.Second
+
+func (a *app) handleWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("ws upgrade: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	ch := a.mgr.Subscribe()
+	defer a.mgr.Unsubscribe(ch)
+
+	if err := conn.WriteJSON(wsMessage{Type: "snapshot", Data: a.mgr.Snapshot()}); err != nil {
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(pollResponse{
-		Snapshot:  a.mgr.Snapshot(),
-		Logs:      logs,
-		NextSince: next,
-	})
+	// The browser never sends anything meaningful - this goroutine exists
+	// only to drive gorilla's control-frame handling and notice when the
+	// connection goes away.
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	ticker := time.NewTicker(wsPingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-closed:
+			return
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+				return
+			}
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			if err := conn.WriteJSON(wsMessage{Type: ev.Name, Data: ev.Data}); err != nil {
+				return
+			}
+		}
+	}
 }
 
 // render writes a full page (extends base layout via {{define "content"}}).
