@@ -89,8 +89,22 @@
     return MONTHS[d.getMonth()] + " " + ordinal(d.getDate()) + ", " + hh + ":" + mm;
   }
 
+  const RECENT_MS = 24 * 60 * 60 * 1000;
+
+  // True for a timestamp less than 24h in the past - guards against clock
+  // skew making a future timestamp (backdated data, clock drift) count as
+  // recent too.
+  function isRecent(iso) {
+    if (!iso) return false;
+    const d = new Date(iso);
+    if (isNaN(d)) return false;
+    const age = Date.now() - d.getTime();
+    return age >= 0 && age < RECENT_MS;
+  }
+
   function renderLastRun(s) {
-    let html = '<time class="ts" datetime="' + escapeAttr(s.lastRun || "") + '">' + formatTimestamp(s.lastRun) + "</time>";
+    const cls = "ts" + (isRecent(s.lastRun) ? " ts-recent" : "");
+    let html = '<time class="' + cls + '" datetime="' + escapeAttr(s.lastRun || "") + '">' + formatTimestamp(s.lastRun) + "</time>";
     if (s.lastError) {
       html += ' <span class="err" title="' + escapeAttr(s.lastError) + '">⚠</span>';
     }
@@ -101,6 +115,7 @@
     document.querySelectorAll("time.ts[datetime]").forEach((el) => {
       const iso = el.getAttribute("datetime");
       if (iso) el.textContent = formatTimestamp(iso);
+      el.classList.toggle("ts-recent", isRecent(iso));
     });
   }
 

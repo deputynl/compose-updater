@@ -49,19 +49,13 @@ header {
 h1 { font-size: 1.1rem; margin: 0; }
 h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 .5rem; flex: 0 0 auto; }
 
-/* Mirrors .layout's grid so each half of the toolbar sits directly above
-   the panel it controls - the filter box ends up the same width as, and
-   flush above, the console panel it filters. */
 .toolbar {
-  display: grid;
-  grid-template-columns: minmax(500px, 600px) 1fr;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: .75rem;
   flex: 0 0 auto;
+  margin-bottom: .75rem;
 }
 .toolbar-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: .5rem;
   min-width: 0;
@@ -76,7 +70,6 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: 
 }
 @media (max-width: 860px) {
   body { overflow: visible; height: auto; }
-  .toolbar { grid-template-columns: 1fr; gap: .5rem; }
   .layout { grid-template-columns: 1fr; flex: 0 0 auto; }
 }
 
@@ -95,7 +88,22 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: 
 }
 @media (max-width: 860px) {
   .panel { height: auto; }
-  .stacks-panel { overflow: visible; }
+  /* The table's fixed columns (on/post/status/updated/action) add up to
+     more than a phone screen's width, and .name has no width of its own -
+     under table-layout:fixed that squeezes it to ~0, making the one thing
+     that says which stack a row is for invisible. Give it a real floor and
+     let just this panel scroll sideways (not overflow: visible + the whole
+     page, which would blow out the fixed header/toolbar above it too). */
+  .stacks-panel {
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* table-layout:fixed only honors *explicit* widths - an unspecified
+     column (name) doesn't get a synthesized minimum, it's simply starved
+     to whatever's left over (0, once the other five columns are laid out).
+     A real width here is what lets the table grow past the panel instead. */
+  table.stacks th:nth-child(3), table.stacks td:nth-child(3) { width: 6rem; }
 }
 
 button {
@@ -232,7 +240,21 @@ table.stacks th {
   position: sticky;
   top: var(--strip-h, 0px); /* sits right below .updating-strip instead of under it */
   z-index: 1;
+  /* Bottom edge sits a few px below where the divider line is drawn (see
+     background-position below) - a same-color buffer, not a bigger visible
+     header, but it gives the sticky box a bit more real height to cover so
+     a hairline of the scrolled-past row underneath can't peek through the
+     bottom edge during scroll (subpixel rounding of the fixed column
+     widths can otherwise leave a 1px gap there in some browsers). Padding
+     rather than an overlay because it has to be real box height for the
+     sticky element to actually cover it, not just paint over it. */
+  padding-bottom: calc(.3rem + 4px);
   background: var(--bg);
+  background-image: linear-gradient(var(--border), var(--border));
+  background-repeat: no-repeat;
+  background-size: 100% 1px;
+  background-position: left 0 bottom 4px; /* draws the divider where border-bottom used to sit, before the extra padding */
+  border-bottom: none;
   /* Forces its own compositing layer - without this, some browsers
      (notably Chrome) can fail to paint a sticky element as fully opaque
      while scrolling, letting the content behind it show through. */
@@ -272,6 +294,8 @@ table.stacks .name {
 
 .err { cursor: help; }
 
+.ts-recent { color: var(--accent); }
+
 .run-indicator { color: var(--accent); font-size: .8rem; }
 
 .bar {
@@ -299,17 +323,24 @@ table.stacks .name {
   display: flex;
   flex-direction: column;
 }
-/* Lines up with the panel's own inner content edge (border + padding)
-   below it, so its left/right edges match the console pane exactly
-   instead of the wider toolbar grid cell it sits in. Width is computed
-   explicitly (not width:auto) because <input> keeps its own intrinsic
-   ~20-character width inside a grid/flex track regardless of stretch
-   alignment - unlike a <div>, it won't fill the track on its own. */
+/* Lives in the console panel it filters (not the toolbar above it) so the
+   association is obvious at any width, including once .layout collapses
+   to one column on mobile and the two panels stack. */
+.console-panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  flex: 0 0 auto;
+}
+.console-panel-header h2 { margin: 0; }
 .console-filter {
   display: block;
-  width: calc(100% - 1.3rem - 2px);
-  margin-left: calc(.65rem + 1px);
+  flex: 1 1 12rem;
+  min-width: 0;
   box-sizing: border-box;
+  margin-bottom: .5rem;
   /* Reset native control chrome first - some browsers/OS themes render
      text inputs with their own square, grey-filled widget and ignore
      border-radius/background entirely until appearance is cleared. */

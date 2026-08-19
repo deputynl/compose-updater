@@ -24,7 +24,6 @@
       {{template "final-step-btn" .FinalStep}}
       <span id="run-indicator" class="run-indicator" hidden>updating…</span>
     </div>
-    <input type="text" id="console-filter" class="console-filter" placeholder="Filter live output…" aria-label="Filter live output by container name or log text">
   </div>
 
   <div class="layout">
@@ -48,7 +47,10 @@
     </section>
 
     <section class="panel console-panel">
-      <h2>Live output</h2>
+      <div class="console-panel-header">
+        <h2>Live output</h2>
+        <input type="text" id="console-filter" class="console-filter" placeholder="Filter live output…" aria-label="Filter live output by container name or log text">
+      </div>
       <pre id="console" class="console"></pre>
     </section>
   </div>

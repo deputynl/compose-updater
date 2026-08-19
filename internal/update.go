@@ -174,13 +174,18 @@ func (m *Manager) runAll(names []string, isGroupRun bool) {
 
 	sem := make(chan struct{}, m.maxParallel)
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	changedByName := make(map[string]bool, len(names))
 	for _, name := range names {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(name string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			m.runStack(name)
+			changed := m.runStack(name)
+			mu.Lock()
+			changedByName[name] = changed
+			mu.Unlock()
 		}(name)
 	}
 	wg.Wait()
@@ -192,6 +197,28 @@ func (m *Manager) runAll(names []string, isGroupRun bool) {
 	if isGroupRun {
 		m.runFinalStep()
 	}
+
+	m.logRunSummary(names, changedByName)
+}
+
+// runSummaryLogTag tags the closing summary line printed after every run,
+// once its final step (if any) has also finished. Parenthesized so it
+// can't collide with a real stack/folder name, same convention as
+// finalStepLogTag.
+const runSummaryLogTag = "(summary)"
+
+func (m *Manager) logRunSummary(names []string, changedByName map[string]bool) {
+	var updated []string
+	for _, name := range names {
+		if changedByName[name] {
+			updated = append(updated, name)
+		}
+	}
+	if len(updated) == 0 {
+		m.appendLog(runSummaryLogTag, "No containers were updated")
+		return
+	}
+	m.appendLog(runSummaryLogTag, "Updated: "+strings.Join(updated, ", "))
 }
 
 // finalStepLogTag tags final-step console lines. Parenthesized so it
@@ -254,18 +281,20 @@ func (m *Manager) RunFinalStepNow(script string) error {
 	return nil
 }
 
-func (m *Manager) runStack(name string) {
+// runStack pulls and (re)starts one stack, reporting whether it actually
+// changed anything (as opposed to finding everything already up to date).
+func (m *Manager) runStack(name string) bool {
 	m.setStatus(name, StateUpdating, "", false)
 
 	dir := filepath.Join(m.composeRoot, name)
 	if _, err := m.runCompose(name, dir, "pull", []string{"pull"}); err != nil {
 		m.setStatus(name, StateFailed, err.Error(), true)
-		return
+		return false
 	}
 	upProgress, err := m.runCompose(name, dir, "up", []string{"up", "-d", "--remove-orphans"})
 	if err != nil {
 		m.setStatus(name, StateFailed, err.Error(), true)
-		return
+		return false
 	}
 	// "Updated" should reflect the last time something actually changed,
 	// not the last time we merely checked - an unchanged container just
@@ -273,13 +302,17 @@ func (m *Manager) runStack(name string) {
 	// words like "Recreate"/"Started". See changeWords in progress.go.
 	changed := upProgress.Changed()
 
-	if m.state != nil {
+	// Post-update steps only make sense against a container this run
+	// actually (re)created - an unchanged container is already running
+	// whatever they last did, so re-running them (e.g. a reload/restart
+	// command) would be a no-op at best and disruptive at worst.
+	if changed && m.state != nil {
 		if cfg, ok := m.state.Get(name); ok {
 			if script := strings.TrimSpace(cfg.PostUpdateScript); script != "" {
 				m.appendLog(name, "Running post-update steps...")
 				if err := m.runPostScript(name, dir, cfg.PostUpdateContainer, script); err != nil {
 					m.setStatus(name, StateFailed, "post-update steps failed: "+err.Error(), true)
-					return
+					return changed
 				}
 				m.appendLog(name, "Post-update steps completed")
 			}
@@ -287,6 +320,7 @@ func (m *Manager) runStack(name string) {
 	}
 
 	m.setStatus(name, StateSuccess, "", changed)
+	return changed
 }
 
 // runCompose runs `docker compose <args...>` in dir, asking compose for
